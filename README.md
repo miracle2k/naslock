@@ -38,6 +38,24 @@ Entries are referenced by **title** or **UUID**:
 naslock unlock tank-media
 ```
 
+## Install
+
+### macOS / Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/miracle2k/naslock/main/install.sh | sh
+```
+
+### Windows (PowerShell)
+
+```powershell
+iwr https://raw.githubusercontent.com/miracle2k/naslock/main/install.ps1 -useb | iex
+```
+
+### Manual
+
+Download the latest release asset for your platform and verify its `.sha256` checksum.
+
 ## TrueNAS API notes
 
 This uses the REST v2.0 endpoint:

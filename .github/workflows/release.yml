@@ -11,47 +11,71 @@ permissions:
 
 jobs:
   build:
-    name: build-${{ matrix.os }}
+    name: build-${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    env:
+      TARGET: ${{ matrix.target }}
+      ASSET: naslock-${{ matrix.target }}.${{ matrix.archive }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
       - name: Build
-        run: cargo build --release
-      - name: Determine target triple
-        shell: bash
-        run: |
-          echo "TARGET=$(rustc -Vv | sed -n 's/^host: //p')" >> "$GITHUB_ENV"
+        run: cargo build --release --target ${{ matrix.target }}
       - name: Package (Unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p dist
-          install -m 755 target/release/naslock dist/
+          install -m 755 "target/${TARGET}/release/naslock" dist/
           cp README.md config.example.toml dist/
-          tar -czf "naslock-${TARGET}.tar.gz" -C dist .
+          tar -czf "${ASSET}" -C dist .
+          python3 - "${ASSET}" <<'PY' > "${ASSET}.sha256"
+          import hashlib, sys
+          path = sys.argv[1]
+          h = hashlib.sha256()
+          with open(path, "rb") as fh:
+              for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                  h.update(chunk)
+          print(h.hexdigest(), end="")
+          PY
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/release/naslock.exe dist/
-          Copy-Item README.md, config.example.toml dist/
-          Compress-Archive -Path dist/* -DestinationPath "naslock-$env:TARGET.zip"
+          Copy-Item "target\\$env:TARGET\\release\\naslock.exe" dist/
+          Copy-Item -Path README.md, config.example.toml -Destination dist
+          Compress-Archive -Path dist\\* -DestinationPath $env:ASSET
+          $hash = (Get-FileHash -Algorithm SHA256 $env:ASSET).Hash.ToLower()
+          Set-Content -NoNewline -Path "$env:ASSET.sha256" -Value $hash
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
           name: naslock-${{ env.TARGET }}
           path: |
-            naslock-${{ env.TARGET }}.tar.gz
-            naslock-${{ env.TARGET }}.zip
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
           if-no-files-found: error
 
   release:
