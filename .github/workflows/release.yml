@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    name: build-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Build
+        run: cargo build --release
+      - name: Determine target triple
+        shell: bash
+        run: echo "TARGET=$(rustc -Vv | sed -n 's/^host: //p')" >> "$GITHUB_ENV"
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          install -m 755 target/release/naslock dist/
+          cp README.md config.example.toml dist/
+          tar -czf "naslock-${TARGET}.tar.gz" -C dist .
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/naslock.exe dist/
+          Copy-Item README.md, config.example.toml dist/
+          Compress-Archive -Path dist/* -DestinationPath "naslock-$env:TARGET.zip"
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: naslock-${{ env.TARGET }}
+          path: |
+            naslock-${{ env.TARGET }}.tar.gz
+            naslock-${{ env.TARGET }}.zip
+          if-no-files-found: error
+
+  release:
+    name: publish-release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
