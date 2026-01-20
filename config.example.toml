@@ -1,0 +1,21 @@
+[keepass]
+path = "/path/to/passwords.kdbx"
+# key_file = "/path/to/passwords.key"
+
+[nas."home"]
+host = "https://truenas.local"
+auth_method = "basic" # or "api_key"
+auth_entry = "NAS Login"
+username_field = "UserName"
+password_field = "Password"
+skip_tls_verify = false
+
+[volume."tank-media"]
+nas = "home"
+dataset = "tank/media"
+unlock_entry = "ZFS media key"
+unlock_field = "Password"
+unlock_mode = "passphrase" # or "key"
+recursive = true
+force = false
+toggle_attachments = true
