@@ -27,7 +27,8 @@ jobs:
         run: cargo build --release
       - name: Determine target triple
         shell: bash
-        run: echo "TARGET=$(rustc -Vv | sed -n 's/^host: //p')" >> "$GITHUB_ENV"
+        run: |
+          echo "TARGET=$(rustc -Vv | sed -n 's/^host: //p')" >> "$GITHUB_ENV"
       - name: Package (Unix)
         if: runner.os != 'Windows'
         shell: bash
