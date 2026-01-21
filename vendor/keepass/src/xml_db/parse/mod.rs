@@ -290,8 +290,11 @@ impl FromXml for Times {
                     }
 
                     _ => {
-                        let time = SimpleTag::<NaiveDateTime>::from_xml(iterator, inner_cipher)?;
-                        out.times.insert(time.name, time.value);
+                        let time =
+                            SimpleTag::<Option<NaiveDateTime>>::from_xml(iterator, inner_cipher)?;
+                        if let Some(value) = time.value {
+                            out.times.insert(time.name, value);
+                        }
                     }
                 },
                 SimpleXmlEvent::End(name) if name == "Times" => break,
