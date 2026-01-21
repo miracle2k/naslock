@@ -172,7 +172,7 @@ fn lock_volume(cfg: &config::Config, volume_name: &str) -> Result<()> {
         &base_url,
         stored_auth.as_auth(),
         &volume.dataset,
-        volume.force,
+        volume.lock_force_umount,
     )?;
 
     if let Some(job_id) = result.job_id {

@@ -63,6 +63,8 @@ pub struct VolumeConfig {
     pub recursive: bool,
     #[serde(default)]
     pub force: bool,
+    #[serde(default, alias = "force_umount", alias = "lock_force")]
+    pub lock_force_umount: bool,
     #[serde(default = "default_toggle_attachments")]
     pub toggle_attachments: bool,
 }
