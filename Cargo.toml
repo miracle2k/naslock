@@ -16,3 +16,6 @@ toml = "0.8.19"
 url = "2.5.4"
 uuid = "1.11.0"
 zeroize = "1.8.1"
+
+[patch.crates-io]
+keepass = { path = "vendor/keepass" }
