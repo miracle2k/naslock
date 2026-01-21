@@ -1,6 +1,6 @@
 # naslock
 
-Unlock TrueNAS/FreeNAS encrypted datasets using secrets stored in a KeePass database.
+Unlock and lock TrueNAS/FreeNAS encrypted datasets using secrets stored in a KeePass database.
 
 ## Overview
 
@@ -10,7 +10,7 @@ Unlock TrueNAS/FreeNAS encrypted datasets using secrets stored in a KeePass data
 2. Opens the KeePass database and reads:
    - NAS auth credentials (username/password or API key).
    - Dataset unlock secret (passphrase or key).
-3. Calls the TrueNAS REST API to unlock a dataset.
+3. Calls the TrueNAS REST API to unlock or lock a dataset.
 
 ## Config
 
@@ -36,6 +36,7 @@ Entries are referenced by **title** or **UUID**:
 
 ```bash
 naslock unlock tank-media
+naslock lock tank-media
 ```
 
 ## Install
@@ -62,6 +63,7 @@ This uses the REST v2.0 endpoint:
 
 ```
 POST /api/v2.0/pool/dataset/unlock
+POST /api/v2.0/pool/dataset/lock
 ```
 
 On newer TrueNAS releases the REST API is deprecated but still works; if it is disabled in your environment you may need to enable it or switch to the WebSocket API in the future.

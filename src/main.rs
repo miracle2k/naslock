@@ -12,7 +12,7 @@ use zeroize::Zeroizing;
 #[command(
     name = "naslock",
     version,
-    about = "Unlock TrueNAS datasets using KeePass"
+    about = "Unlock or lock TrueNAS datasets using KeePass"
 )]
 struct Cli {
     #[arg(short, long, env = "NASLOCK_CONFIG")]
@@ -24,6 +24,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Unlock { volume: String },
+    Lock { volume: String },
 }
 
 enum StoredAuth {
@@ -55,6 +56,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Unlock { volume } => unlock_volume(&cfg, &volume),
+        Command::Lock { volume } => lock_volume(&cfg, &volume),
     }
 }
 
@@ -83,23 +85,8 @@ fn unlock_volume(cfg: &config::Config, volume_name: &str) -> Result<()> {
         master_password.as_str(),
     )?;
 
-    let auth_entry = require_entry(&store, &nas.auth_entry)?;
+    let stored_auth = load_auth(&store, nas)?;
     let unlock_entry = require_entry(&store, &volume.unlock_entry)?;
-
-    let stored_auth = match nas.auth_method {
-        config::AuthMethod::Basic => {
-            let username = required_field(auth_entry, &nas.username_field, &nas.auth_entry)?;
-            let password = required_field(auth_entry, &nas.password_field, &nas.auth_entry)?;
-            ensure_non_empty(username.as_str(), "NAS username")?;
-            ensure_non_empty(password.as_str(), "NAS password")?;
-            StoredAuth::Basic { username, password }
-        }
-        config::AuthMethod::ApiKey => {
-            let key = required_field(auth_entry, &nas.password_field, &nas.auth_entry)?;
-            ensure_non_empty(key.as_str(), "API key")?;
-            StoredAuth::ApiKey { key }
-        }
-    };
 
     let unlock_secret_value =
         required_field(unlock_entry, &volume.unlock_field, &volume.unlock_entry)?;
@@ -155,4 +142,76 @@ fn unlock_volume(cfg: &config::Config, volume_name: &str) -> Result<()> {
 
     println!("unlock request accepted");
     Ok(())
+}
+
+fn lock_volume(cfg: &config::Config, volume_name: &str) -> Result<()> {
+    let volume = cfg
+        .volume
+        .get(volume_name)
+        .with_context(|| format!("unknown volume '{}'", volume_name))?;
+    let nas = cfg
+        .nas
+        .get(&volume.nas)
+        .with_context(|| format!("unknown NAS '{}'", volume.nas))?;
+
+    let master_password = Zeroizing::new(rpassword::prompt_password("KeePass password: ")?);
+
+    let store = keepass_store::KeePassStore::open(
+        &cfg.keepass.path,
+        cfg.keepass.key_file.as_deref(),
+        master_password.as_str(),
+    )?;
+
+    let stored_auth = load_auth(&store, nas)?;
+
+    let client = truenas::build_client(nas.skip_tls_verify)?;
+    let base_url = truenas::parse_base_url(&nas.host)?;
+
+    let result = truenas::lock_dataset(
+        &client,
+        &base_url,
+        stored_auth.as_auth(),
+        &volume.dataset,
+        volume.force,
+    )?;
+
+    if let Some(job_id) = result.job_id {
+        let job = truenas::wait_for_job(&client, &base_url, stored_auth.as_auth(), job_id)?;
+        println!("lock complete (job id: {})", job.id);
+        return Ok(());
+    }
+
+    if result.locked {
+        println!("locked dataset: {}", volume.dataset);
+        return Ok(());
+    }
+
+    if let Some(message) = result.message {
+        println!("{}", message);
+        return Ok(());
+    }
+
+    println!("lock request accepted");
+    Ok(())
+}
+
+fn load_auth(store: &keepass_store::KeePassStore, nas: &config::NasConfig) -> Result<StoredAuth> {
+    let auth_entry = require_entry(store, &nas.auth_entry)?;
+
+    let stored_auth = match nas.auth_method {
+        config::AuthMethod::Basic => {
+            let username = required_field(auth_entry, &nas.username_field, &nas.auth_entry)?;
+            let password = required_field(auth_entry, &nas.password_field, &nas.auth_entry)?;
+            ensure_non_empty(username.as_str(), "NAS username")?;
+            ensure_non_empty(password.as_str(), "NAS password")?;
+            StoredAuth::Basic { username, password }
+        }
+        config::AuthMethod::ApiKey => {
+            let key = required_field(auth_entry, &nas.password_field, &nas.auth_entry)?;
+            ensure_non_empty(key.as_str(), "API key")?;
+            StoredAuth::ApiKey { key }
+        }
+    };
+
+    Ok(stored_auth)
 }

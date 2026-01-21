@@ -38,6 +38,13 @@ pub struct UnlockResult {
     pub message: Option<String>,
 }
 
+#[derive(Default)]
+pub struct LockResult {
+    pub job_id: Option<i64>,
+    pub locked: bool,
+    pub message: Option<String>,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct JobInfo {
     pub id: i64,
@@ -126,6 +133,41 @@ pub fn unlock_dataset(
     parse_unlock_response(&text)
 }
 
+pub fn lock_dataset(
+    client: &Client,
+    base_url: &Url,
+    auth: Auth<'_>,
+    dataset: &str,
+    force_umount: bool,
+) -> Result<LockResult> {
+    let url = base_url
+        .join("api/v2.0/pool/dataset/lock")
+        .context("failed to build API URL")?;
+
+    let body = LockRequest {
+        id: dataset,
+        lock_options: LockOptionsBody { force_umount },
+    };
+
+    let mut headers = HeaderMap::new();
+    headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+
+    let mut request = client.post(url).headers(headers).json(&body);
+    request = apply_auth(request, auth);
+
+    let response = request.send().context("failed to send lock request")?;
+    let status = response.status();
+    let text = response
+        .text()
+        .context("failed to read lock response body")?;
+
+    if !status.is_success() {
+        bail!("TrueNAS API error ({}): {}", status, text.trim());
+    }
+
+    parse_lock_response(&text)
+}
+
 pub fn wait_for_job(
     client: &Client,
     base_url: &Url,
@@ -147,7 +189,7 @@ pub fn wait_for_job(
                         .clone()
                         .or(job.exception.clone())
                         .unwrap_or_else(|| "job failed".to_string());
-                    bail!("unlock job {} failed: {}", job_id, detail.trim());
+                    bail!("job {} failed: {}", job_id, detail.trim());
                 }
                 _ => {}
             }
@@ -195,6 +237,17 @@ struct UnlockDataset<'a> {
     passphrase: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     key: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct LockRequest<'a> {
+    id: &'a str,
+    lock_options: LockOptionsBody,
+}
+
+#[derive(Serialize)]
+struct LockOptionsBody {
+    force_umount: bool,
 }
 
 fn parse_unlock_response(text: &str) -> Result<UnlockResult> {
@@ -249,6 +302,60 @@ fn parse_unlock_response(text: &str) -> Result<UnlockResult> {
         Err(_) => {
             if let Ok(job_id) = trimmed.parse::<i64>() {
                 result.job_id = Some(job_id);
+            } else {
+                result.message = Some(trimmed.to_string());
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn parse_lock_response(text: &str) -> Result<LockResult> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(LockResult::default());
+    }
+
+    let mut result = LockResult::default();
+    match serde_json::from_str::<Value>(trimmed) {
+        Ok(Value::Object(map)) => {
+            if let Some(job_id) = map.get("job_id").and_then(|v| v.as_i64()) {
+                result.job_id = Some(job_id);
+            }
+            if let Some(locked) = map.get("locked").and_then(|v| v.as_bool()) {
+                result.locked = locked;
+            }
+            if let Some(message) = map.get("message").and_then(|v| v.as_str()) {
+                result.message = Some(message.to_string());
+            }
+        }
+        Ok(Value::Bool(value)) => {
+            result.locked = value;
+        }
+        Ok(Value::Number(num)) => {
+            if let Some(job_id) = num.as_i64() {
+                result.job_id = Some(job_id);
+            } else {
+                result.message = Some(num.to_string());
+            }
+        }
+        Ok(Value::String(text)) => {
+            if let Ok(job_id) = text.trim().parse::<i64>() {
+                result.job_id = Some(job_id);
+            } else if let Ok(value) = text.trim().parse::<bool>() {
+                result.locked = value;
+            } else {
+                result.message = Some(text);
+            }
+        }
+        Ok(other) => {
+            result.message = Some(other.to_string());
+        }
+        Err(_) => {
+            if let Ok(job_id) = trimmed.parse::<i64>() {
+                result.job_id = Some(job_id);
+            } else if let Ok(value) = trimmed.parse::<bool>() {
+                result.locked = value;
             } else {
                 result.message = Some(trimmed.to_string());
             }

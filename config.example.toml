@@ -17,5 +17,5 @@ unlock_entry = "ZFS media key"
 unlock_field = "Password"
 unlock_mode = "passphrase" # or "key"
 recursive = true
-force = false
+force = false # unlock: force, lock: force_umount
 toggle_attachments = true
