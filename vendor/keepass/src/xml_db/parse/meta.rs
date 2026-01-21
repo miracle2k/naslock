@@ -160,19 +160,39 @@ impl FromXml for MemoryProtection {
             match event {
                 SimpleXmlEvent::Start(name, _) => match &name[..] {
                     "ProtectTitle" => {
-                        out.protect_title = SimpleTag::<bool>::from_xml(iterator, inner_cipher)?.value;
+                        let value =
+                            SimpleTag::<Option<bool>>::from_xml(iterator, inner_cipher)?.value;
+                        if let Some(value) = value {
+                            out.protect_title = value;
+                        }
                     }
                     "ProtectUserName" => {
-                        out.protect_username = SimpleTag::<bool>::from_xml(iterator, inner_cipher)?.value;
+                        let value =
+                            SimpleTag::<Option<bool>>::from_xml(iterator, inner_cipher)?.value;
+                        if let Some(value) = value {
+                            out.protect_username = value;
+                        }
                     }
                     "ProtectPassword" => {
-                        out.protect_password = SimpleTag::<bool>::from_xml(iterator, inner_cipher)?.value;
+                        let value =
+                            SimpleTag::<Option<bool>>::from_xml(iterator, inner_cipher)?.value;
+                        if let Some(value) = value {
+                            out.protect_password = value;
+                        }
                     }
                     "ProtectURL" => {
-                        out.protect_url = SimpleTag::<bool>::from_xml(iterator, inner_cipher)?.value;
+                        let value =
+                            SimpleTag::<Option<bool>>::from_xml(iterator, inner_cipher)?.value;
+                        if let Some(value) = value {
+                            out.protect_url = value;
+                        }
                     }
                     "ProtectNotes" => {
-                        out.protect_notes = SimpleTag::<bool>::from_xml(iterator, inner_cipher)?.value;
+                        let value =
+                            SimpleTag::<Option<bool>>::from_xml(iterator, inner_cipher)?.value;
+                        if let Some(value) = value {
+                            out.protect_notes = value;
+                        }
                     }
                     _ => IgnoreSubfield::from_xml(iterator, inner_cipher)?,
                 },

@@ -283,7 +283,11 @@ impl FromXml for Times {
             match event {
                 SimpleXmlEvent::Start(name, _) => match &name[..] {
                     "Expires" => {
-                        out.expires = SimpleTag::<bool>::from_xml(iterator, inner_cipher)?.value;
+                        let value =
+                            SimpleTag::<Option<bool>>::from_xml(iterator, inner_cipher)?.value;
+                        if let Some(value) = value {
+                            out.expires = value;
+                        }
                     }
                     "UsageCount" => {
                         out.usage_count = SimpleTag::<usize>::from_xml(iterator, inner_cipher)?.value;

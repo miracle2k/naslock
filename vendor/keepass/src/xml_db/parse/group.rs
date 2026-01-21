@@ -44,7 +44,11 @@ impl FromXml for Group {
                         out.times = Times::from_xml(iterator, inner_cipher)?;
                     }
                     "IsExpanded" => {
-                        out.is_expanded = SimpleTag::<bool>::from_xml(iterator, inner_cipher)?.value;
+                        let value =
+                            SimpleTag::<Option<bool>>::from_xml(iterator, inner_cipher)?.value;
+                        if let Some(value) = value {
+                            out.is_expanded = value;
+                        }
                     }
                     "DefaultAutoTypeSequence" => {
                         out.default_autotype_sequence =
