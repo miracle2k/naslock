@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use reqwest::blocking::{Client, ClientBuilder};
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::time::Duration;
 use url::Url;
 
@@ -19,6 +19,7 @@ pub struct UnlockOptions {
     pub toggle_attachments: bool,
 }
 
+#[derive(Clone, Copy)]
 pub enum Auth<'a> {
     Basic {
         username: &'a str,
@@ -35,6 +36,16 @@ pub struct UnlockResult {
     pub unlocked: Vec<String>,
     pub failed: Vec<(String, String)>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct JobInfo {
+    pub id: i64,
+    pub state: Option<String>,
+    pub error: Option<String>,
+    pub exception: Option<String>,
+    pub progress_percent: Option<f64>,
+    pub progress_description: Option<String>,
 }
 
 pub fn build_client(skip_tls_verify: bool) -> Result<Client> {
@@ -100,13 +111,7 @@ pub fn unlock_dataset(
     headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
 
     let mut request = client.post(url).headers(headers).json(&body);
-    request = match auth {
-        Auth::Basic { username, password } => request.basic_auth(username, Some(password)),
-        Auth::ApiKey { key } => {
-            let value = format!("Bearer {}", key);
-            request.header(AUTHORIZATION, value)
-        }
-    };
+    request = apply_auth(request, auth);
 
     let response = request.send().context("failed to send unlock request")?;
     let status = response.status();
@@ -119,6 +124,53 @@ pub fn unlock_dataset(
     }
 
     parse_unlock_response(&text)
+}
+
+pub fn wait_for_job(
+    client: &Client,
+    base_url: &Url,
+    auth: Auth<'_>,
+    job_id: i64,
+) -> Result<JobInfo> {
+    let poll_interval = Duration::from_secs(1);
+    let mut last_progress: Option<(Option<f64>, Option<String>)> = None;
+
+    loop {
+        let job = get_job(client, base_url, auth, job_id)?;
+
+        if let Some(state) = job.state.as_deref() {
+            match state {
+                "SUCCESS" => return Ok(job),
+                "FAILED" | "ABORTED" => {
+                    let detail = job
+                        .error
+                        .clone()
+                        .or(job.exception.clone())
+                        .unwrap_or_else(|| "job failed".to_string());
+                    bail!("unlock job {} failed: {}", job_id, detail.trim());
+                }
+                _ => {}
+            }
+        }
+
+        let progress = (job.progress_percent, job.progress_description.clone());
+        if progress.0.is_some() || progress.1.is_some() {
+            if last_progress.as_ref() != Some(&progress) {
+                if let Some(percent) = progress.0 {
+                    if let Some(desc) = progress.1.as_deref() {
+                        println!("job {}: {:.0}% {}", job_id, percent, desc);
+                    } else {
+                        println!("job {}: {:.0}%", job_id, percent);
+                    }
+                } else if let Some(desc) = progress.1.as_deref() {
+                    println!("job {}: {}", job_id, desc);
+                }
+                last_progress = Some(progress);
+            }
+        }
+
+        std::thread::sleep(poll_interval);
+    }
 }
 
 #[derive(Serialize)]
@@ -177,12 +229,170 @@ fn parse_unlock_response(text: &str) -> Result<UnlockResult> {
                 result.message = Some(message.to_string());
             }
         }
+        Ok(Value::Number(num)) => {
+            if let Some(job_id) = num.as_i64() {
+                result.job_id = Some(job_id);
+            } else {
+                result.message = Some(num.to_string());
+            }
+        }
+        Ok(Value::String(text)) => {
+            if let Ok(job_id) = text.trim().parse::<i64>() {
+                result.job_id = Some(job_id);
+            } else {
+                result.message = Some(text);
+            }
+        }
         Ok(other) => {
             result.message = Some(other.to_string());
         }
         Err(_) => {
-            result.message = Some(trimmed.to_string());
+            if let Ok(job_id) = trimmed.parse::<i64>() {
+                result.job_id = Some(job_id);
+            } else {
+                result.message = Some(trimmed.to_string());
+            }
         }
     }
     Ok(result)
+}
+
+fn apply_auth(
+    request: reqwest::blocking::RequestBuilder,
+    auth: Auth<'_>,
+) -> reqwest::blocking::RequestBuilder {
+    match auth {
+        Auth::Basic { username, password } => request.basic_auth(username, Some(password)),
+        Auth::ApiKey { key } => {
+            let value = format!("Bearer {}", key);
+            request.header(AUTHORIZATION, value)
+        }
+    }
+}
+
+fn get_job(client: &Client, base_url: &Url, auth: Auth<'_>, job_id: i64) -> Result<JobInfo> {
+    let url = base_url
+        .join("api/v2.0/core/get_jobs")
+        .context("failed to build jobs API URL")?;
+
+    let post_result = fetch_job_via_post(client, url.clone(), auth, job_id);
+    if let Ok(job) = post_result {
+        return Ok(job);
+    }
+
+    let get_result = fetch_job_via_get(client, url, auth, job_id);
+    match (post_result.err(), get_result) {
+        (_, Ok(job)) => Ok(job),
+        (Some(post_err), Err(get_err)) => Err(anyhow::anyhow!(
+            "failed to query job status: post error: {}; get error: {}",
+            post_err,
+            get_err
+        )),
+        (None, Err(get_err)) => Err(get_err),
+    }
+}
+
+fn fetch_job_via_post(client: &Client, url: Url, auth: Auth<'_>, job_id: i64) -> Result<JobInfo> {
+    let mut request = client
+        .post(url)
+        .header(ACCEPT, "application/json")
+        .json(&json!([[["id", "=", job_id]]]));
+    request = apply_auth(request, auth);
+
+    let response = request.send().context("failed to query job status")?;
+    let status = response.status();
+    let text = response
+        .text()
+        .context("failed to read job status response body")?;
+
+    if !status.is_success() {
+        bail!("TrueNAS API error ({}): {}", status, text.trim());
+    }
+
+    parse_job_response(&text, job_id)
+}
+
+fn fetch_job_via_get(
+    client: &Client,
+    mut url: Url,
+    auth: Auth<'_>,
+    job_id: i64,
+) -> Result<JobInfo> {
+    url.query_pairs_mut().append_pair("id", &job_id.to_string());
+
+    let mut request = client.get(url).header(ACCEPT, "application/json");
+    request = apply_auth(request, auth);
+
+    let response = request.send().context("failed to query job status")?;
+    let status = response.status();
+    let text = response
+        .text()
+        .context("failed to read job status response body")?;
+
+    if !status.is_success() {
+        bail!("TrueNAS API error ({}): {}", status, text.trim());
+    }
+
+    parse_job_response(&text, job_id)
+}
+
+fn parse_job_response(text: &str, job_id: i64) -> Result<JobInfo> {
+    let trimmed = text.trim();
+    let value: Value = serde_json::from_str(trimmed)
+        .with_context(|| format!("failed to parse job status: {}", trimmed))?;
+
+    if let Some(job) = extract_job(&value, job_id) {
+        return Ok(job);
+    }
+
+    bail!("job {} not found in response", job_id);
+}
+
+fn extract_job(value: &Value, job_id: i64) -> Option<JobInfo> {
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .find_map(|item| parse_job_info(item).filter(|j| j.id == job_id)),
+        Value::Object(_) => parse_job_info(value).filter(|j| j.id == job_id),
+        _ => None,
+    }
+}
+
+fn parse_job_info(value: &Value) -> Option<JobInfo> {
+    let obj = value.as_object()?;
+    let id = obj.get("id")?.as_i64()?;
+    let state = obj
+        .get("state")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let error = obj
+        .get("error")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let exception = obj
+        .get("exception")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let (progress_percent, progress_description) = obj
+        .get("progress")
+        .and_then(|v| v.as_object())
+        .map(|progress| {
+            let percent = progress.get("percent").and_then(|v| v.as_f64());
+            let desc = progress
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            (percent, desc)
+        })
+        .unwrap_or((None, None));
+
+    Some(JobInfo {
+        id,
+        state,
+        error,
+        exception,
+        progress_percent,
+        progress_description,
+    })
 }

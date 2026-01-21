@@ -138,7 +138,8 @@ fn unlock_volume(cfg: &config::Config, volume_name: &str) -> Result<()> {
     }
 
     if let Some(job_id) = result.job_id {
-        println!("unlock job submitted (job id: {})", job_id);
+        let job = truenas::wait_for_job(&client, &base_url, stored_auth.as_auth(), job_id)?;
+        println!("unlock complete (job id: {})", job.id);
         return Ok(());
     }
 
