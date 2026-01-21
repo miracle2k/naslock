@@ -20,7 +20,7 @@ Default config location:
 - Linux: `~/.config/naslock/config.toml`
 - Windows: `%APPDATA%\\naslock\\config.toml`
 
-Override with `NASLOCK_CONFIG` or `--config`.
+Override with `NASLOCK_CONFIG` or `--config`. If `.naslock.conf` exists in the current directory, it takes precedence.
 
 See `config.example.toml` for a full example.
 

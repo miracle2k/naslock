@@ -64,6 +64,12 @@ fn resolve_config_path(cli_path: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(path) = cli_path {
         return Ok(config::expand_path(&path, None));
     }
+    if let Ok(cwd) = std::env::current_dir() {
+        let local = cwd.join(".naslock.conf");
+        if local.is_file() {
+            return Ok(local);
+        }
+    }
     config::default_config_path()
 }
 
